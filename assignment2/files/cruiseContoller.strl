@@ -58,11 +58,11 @@ module CruiseStateContoller
     constant speedMin : float; 
 
     % State Output 
-    output CruiseState : integer; % 1 = OFF; 2 = ON; 3 = STDBY; 4 = DISABLE;
+    output State_1 : integer; % 1 = OFF; 2 = ON; 3 = STDBY; 4 = DISABLE;
 
     var state := 1 : integer in 
         loop 
-            emit CruiseState_1(state); 
+            emit State_1(state); 
             await tick; 
             if state = 1 then 
                 present (On_1) then 
@@ -100,6 +100,78 @@ module CruiseStateContoller
     end var; 
  end module; 
 
+module CruiseSpeedController
+    input State_1; 
+    input Set_1, QuickAccel_1, QuickDecel_1; 
+    input Speed_1 : float; 
+
+    constant speedMin : float;
+    constant speedMax : float;
+    constant speedInc : float; 
+
+    output CruiseSpeed_1 : float; 
+
+    var currentSpeed := 0.0f : float in  
+        loop 
+            emit CruiseSpeed_1(currentSpeed); 
+            await State_1;
 
 
+            if (?State_1 = 1) then 
+                currentSpeed := 0.0f; 
+            else 
+                if pre(?State_1 = 1) then 
+                    currentSpeed := ?Speed_1; 
+                end if; 
+                present (Set_1) then 
+                    currentSpeed := ?Speed_1; 
+                else 
+                    present (QuickAccel_1) then
+                        currentSpeed := currentSpeed + speedInc;
+                    end present;
 
+                    present (QuickDecel_1) then
+                        currentSpeed := currentSpeed - speedInc;
+                    end present;
+                end present; 
+                if (currentSpeed > speedMax) then 
+                    currentSpeed := speedMax; 
+                elsif (currentSpeed < speedMin) then 
+                    currentSpeed := speedMin; 
+                end if; 
+            end if; 
+        end loop; 
+    end var; 
+end module; 
+
+module ThrottleCmdContoller 
+% Inputs
+    input State_1 : integer; 
+    input CruiseSpeed_1 : float;
+    input Speed_1 : float;
+    input Accel_1 : float;
+
+    % Throttle Output 
+    output Throttle_1 : float;
+
+    function regulateThrottle(integer, float, float) : float;
+
+    loop 
+        await tick; 
+        trap throttle in 
+            if State_1 = 0 then
+                emit Throttle_1(Accel_1);
+                exit throttle; 
+            elsif (State_1 = 1 and pre(State_1 = 0)) 
+                emit Throttle_1(regulateThrottle(1, CruiseSpeed_1, Speed_1));
+                exit throttle;
+            elsif State_1 = 1 then
+                emit Throttle_1(regulateThrottle(0, CruiseSpeed_1, Speed_1));
+                exit throttle;
+            else
+                emit Throttle_1(Accel_1);
+                exit throttle;
+            end if;
+        end trap; 
+    end loop; 
+end module; 
