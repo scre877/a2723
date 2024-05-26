@@ -12,6 +12,16 @@ module cruiseContoller:
     output CruiseState: integer; 
 
 
+    run CruiseSpeedController [
+        signal CruiseState/State_1; 
+        signal Speed/Speed_1; 
+        signal Set/Set_1; 
+        signal QuickAccel/QuickAccel_1; 
+        signal QuickDecel/QuickDecel_1; 
+
+        signal CruiseSpeed/CruiseSpeed_1
+    ]
+    || 
     run CruiseStateContoller [ 
         signal On/On_1; 
         signal Off/Off_1;
@@ -20,27 +30,16 @@ module cruiseContoller:
         signal Brake/Brake_1;
         signal Speed/Speed_1;
 
-        signal CruiseState/State_1; 
+        signal CruiseState/State_1
     ]
     ||
-    run CruiseSpeedController [
-        signal CruiseState/State_1; 
-        signal On/On_1; 
-        signal Speed/Speed_1; 
-        signal Set/Set_1; 
-        signal QuickAccel/QuickAccel_1; 
-        signal QuickDecel/QuickDecel_1; 
-
-        signal CruiseSpeed/CruiseSpeed_1; 
-    ]
-    || 
     run ThrottleCmdContoller [
         signal CruiseSpeed/CruiseSpeed_1; 
         signal CruiseState/State_1; 
         signal Speed/Speed_1; 
         signal Accel/Accel_1; 
 
-        signal ThrottleCmd/Throttle_1; 
+        signal ThrottleCmd/Throttle_1
     ]
 
 end module 
@@ -55,52 +54,72 @@ module CruiseStateContoller:
     % Constants 
     constant speedMax : float; 
     constant speedMin : float; 
+    constant pedelMin : float; 
 
     % State Output 
     output State_1 : integer; % 1 = OFF; 2 = ON; 3 = STDBY; 4 = DISABLE;
+
+    var speedCorrect := false : boolean in
+    var accelPressed := false : boolean in 
+    var brakePressed := false : boolean in 
 
     var state := 1 : integer in 
         loop 
             emit State_1(state); 
             await tick; 
+            speedCorrect := (?Speed_1) >= speedMin and (?Speed_1) <= speedMax; 
+            accelPressed := (?Accel_1) > pedelMin; 
+            brakePressed := (?Brake_1) > pedelMin; 
+
             if state = 1 then 
                 present (On_1) then 
                     state := 2;
                 end present; 
-            elsif state = 2 then 
-                present (Off_1) then 
-                    state := 1; 
-                end present; 
-                present (Brake_1 and not(Off_1)) then 
-                    state := 3; 
-                end present; 
-                present ((Accel_1 = 1) or (Speed_1 > speedMax) or (Speed_1 < speedMin) and not(Off_1) and not(Brake_1)) then 
-                    state := 4; 
-                end present; 
-            elsif state = 3 then 
-                present (Off_1) then 
-                    state := 1; 
-                end present; 
-                present (Resume_1 and not(Brake_1) and not(Off_1) and (not(Accel_1) or Speed_1 < speedMax or Speed_1 > speedMin)) then
-                    state := 2; 
-                end present; 
-                present (Resume_1 and not(Brake_1) and not(Off_1) and (Accel_1 or Speed > speedMax or Speed < speedMin)) then 
-                    state := 4; 
-                end present; 
-            elsif state = 4 then 
-                present (Off_1) then 
-                    state := 1; 
-                end present; 
-                present (not(Accel_1) and Speed_1 < speedMax and Speed_1 > speedMin) then 
-                    state := 2; 
-                end present; 
+            else 
+                if state = 2 then 
+                    present (Off_1) then 
+                        state := 1; 
+                    end present; 
+                    if brakePressed then 
+                        state := 3; 
+                    end if; 
+                    if (accelPressed or not(speedCorrect)) then 
+                        state := 4; 
+                    end if; 
+                end if; 
+                if state = 3 then 
+                    present (Off_1) then 
+                        state := 1; 
+                    end present; 
+                    present (Resume_1) then 
+                        if (not(brakePressed) and not(accelPressed)) then 
+                            if (speedCorrect) then
+                                state := 2; 
+                            end if; 
+                            if not(speedCorrect) then 
+                                state := 4; 
+                            end if; 
+                        end if;
+                    end present; 
+                end if; 
+                if state = 4 then 
+                    present (Off_1) then 
+                        state := 1; 
+                    end present; 
+                    if (not(accelPressed) and speedCorrect) then 
+                        state := 2; 
+                    end if; 
+                end if;
             end if; 
         end loop; 
+    end var; 
+    end var; 
+    end var;
     end var; 
  end module 
 
 module CruiseSpeedController: 
-    input State_1; 
+    input State_1 : integer; 
     input Set_1, QuickAccel_1, QuickDecel_1; 
     input Speed_1 : float; 
 
@@ -116,10 +135,10 @@ module CruiseSpeedController:
             await State_1;
 
 
-            if (?State_1 = 1) then 
+            if (?State_1) = 1 then 
                 currentSpeed := 0.0f; 
             else 
-                if pre(?State_1 = 1) then 
+                if pre(?State_1) = 1 then 
                     currentSpeed := ?Speed_1; 
                 end if; 
                 present (Set_1) then 
@@ -158,19 +177,20 @@ module ThrottleCmdContoller:
     loop 
         await tick; 
         trap throttle in 
-            if State_1 = 0 then
-                emit Throttle_1(Accel_1);
+            if (?State_1) = 1 then
+                emit Throttle_1((?Accel_1));
                 exit throttle; 
-            elsif (State_1 = 1 and pre(State_1 = 0)) 
-                emit Throttle_1(regulateThrottle(1, CruiseSpeed_1, Speed_1));
+            elsif (?State_1) = 2 and (pre(?State_1) = 1) then 
+                emit Throttle_1(regulateThrottle(1, (?CruiseSpeed_1), (?Speed_1)));
                 exit throttle;
-            elsif State_1 = 1 then
-                emit Throttle_1(regulateThrottle(0, CruiseSpeed_1, Speed_1));
+            elsif (?State_1) = 2 then
+                emit Throttle_1(regulateThrottle(0, (?CruiseSpeed_1), (?Speed_1)));
                 exit throttle;
             else
-                emit Throttle_1(Accel_1);
+                emit Throttle_1((?Accel_1));
                 exit throttle;
             end if;
         end trap; 
     end loop; 
 end module 
+
