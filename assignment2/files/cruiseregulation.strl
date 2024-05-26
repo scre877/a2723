@@ -1,4 +1,3 @@
-% main module 
 module cruiseContoller: 
 
     % Inputs
